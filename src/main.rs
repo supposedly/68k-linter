@@ -1,32 +1,32 @@
-use std::fs;
 use std::env;
+use std::fs;
 use std::io::{self, prelude::*};
 
 enum Size {
     Short,
     Byte,
     Word,
-    Long
+    Long,
 }
 
 enum Line {
     Code {
-      label: Option<String>,
-      initial_ws: u16,
-      instruction: String,
-      size: Size,
-      medial_ws: u16,
-      args: Vec<String>,
-      final_ws: Option<u16>,
-      comment: Option<String>,
+        label: Option<String>,
+        initial_ws: u16,
+        instruction: String,
+        size: Size,
+        medial_ws: u16,
+        args: Vec<String>,
+        final_ws: Option<u16>,
+        comment: Option<String>,
     },
     Comment {
-      ws: u16,
-      text: String
+        ws: u16,
+        text: String,
     },
     Label {
-      name: String
-    }
+        name: String,
+    },
 }
 
 fn main() -> io::Result<()> {
@@ -41,12 +41,9 @@ fn main() -> io::Result<()> {
 }
 
 fn collect_lines<B: BufRead>(reader: B) -> io::Result<Vec<Vec<String>>> {
-    let lines = reader.lines()
-      .collect::<Result<Vec<_>, _>>()?;
+    let lines = reader.lines().collect::<Result<Vec<_>, _>>()?;
 
-    Ok(lines.into_iter()
-      .map(|s| vec![s])
-      .collect())
+    Ok(lines.into_iter().map(|s| vec![s]).collect())
 }
 
 fn parse(line: &mut Vec<String>) -> Vec<Line> {
