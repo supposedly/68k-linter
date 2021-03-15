@@ -9,24 +9,24 @@ enum Size {
     Long
 }
 
-struct LineOfCode {
-    label: Option<String>,
-    initial_ws: u16,
-    instruction: String,
-    size: Size,
-    medial_ws: u16,
-    args: Vec<String>,
-    final_ws: Option<u16>,
-    comment: Option<String>,
-}
-
-struct Comment {
-    ws: u16,
-    text: String
-}
-
-struct Label {
-    name: String
+enum Line {
+    Code {
+      label: Option<String>,
+      initial_ws: u16,
+      instruction: String,
+      size: Size,
+      medial_ws: u16,
+      args: Vec<String>,
+      final_ws: Option<u16>,
+      comment: Option<String>,
+    },
+    Comment {
+      ws: u16,
+      text: String
+    },
+    Label {
+      name: String
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -50,5 +50,5 @@ fn collect_lines<B: BufRead>(reader: B) -> io::Result<Vec<Vec<String>>> {
 }
 
 fn parse(line: &mut Vec<String>) -> Vec<Line> {
-    
+    todo!();
 }
