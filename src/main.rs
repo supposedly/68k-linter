@@ -5,7 +5,11 @@ use std::io::{self, prelude::*};
 use regex::{self, Regex};
 
 const ALIGNMENT: u8 = 4; // tab size
+const COMMENT_PREFIX: Option<char> = Some(';');
+const CHANGE_COMMENTS: bool = false;
+const STANDALONE_LABEL_COLON: bool = true;
 
+#[derive(PartialEq)]
 enum Size {
     Short,
     Byte,
@@ -28,6 +32,7 @@ enum Line {
         args: Option<String>,
         final_ws: Option<u16>,
         comment: Option<String>,
+        collapsible: bool,
     },
     Comment {
         orig_length: u16,
@@ -48,9 +53,9 @@ enum Line {
     Blank,
 }
 
-struct Regexes {
-    code: Regex,
-    label_with_comment: Regex,
+struct Regexes<'a> {
+    code: &'a Regex,
+    label_with_comment: &'a Regex,
 }
 
 fn main() -> Result<(), io::Error> {
@@ -84,8 +89,8 @@ fn main() -> Result<(), io::Error> {
             parse(
                 line,
                 &Regexes {
-                    code,
-                    label_with_comment,
+                    code: &code,
+                    label_with_comment: &label_with_comment,
                 },
             )
         })
@@ -146,7 +151,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 .unwrap_or_default(),
             instruction: captures
                 .name("instruction")
-                .map(|m| m.as_str().to_owned())
+                .map(|m| m.as_str().to_ascii_uppercase().to_owned())
                 .expect("Line of code has no instruction"),
             size: captures
                 .name("size")
@@ -165,6 +170,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             args: captures.name("args").map(|m| m.as_str().to_owned()),
             final_ws: captures.name("ws3").map(|m| m.range().len() as u16),
             comment: captures.name("comment").map(|m| m.as_str().to_owned()),
+            collapsible: false,
         },
         None => Line::Unknown {
             orig_length: post_trimmed.len() as u16,
@@ -174,33 +180,66 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
 }
 
 fn process(lines: &mut Vec<Line>) {
-    for (idx, line) in lines.iter_mut().enumerate() {
+    for line in lines.iter_mut() {
         match line {
             Line::Code {
-                orig_length,
-                label,
-                had_colon,
-                initial_ws,
+                // orig_length,
+                // label,
+                // had_colon,
+                // initial_ws,
                 instruction,
                 size,
-                medial_ws,
+                // medial_ws,
                 args,
-                final_ws,
+                // final_ws,
                 comment,
+                collapsible,
+                ..
             } => {
-                *size = Size::Short;
+                if instruction == "MOVE" && *size == Size::Byte {
+                    if let Some(s) = args {
+                        // sloppy lol
+                        if s.starts_with("#'") && s.contains("',(A5)+") {
+                            *collapsible = true;
+                        }
+                    }
+                }
+                #[allow(unreachable_code)]
+                if CHANGE_COMMENTS {
+                    if let Some(c) = COMMENT_PREFIX {
+                        *comment = match comment {
+                            Some(s) => Some(c.to_string() + &s),
+                            None => None,
+                        };
+                    }
+                }
             }
             Line::Comment {
-                orig_length,
-                ws,
+                // orig_length,
+                // ws,
                 prefix,
-                text,
-            } => {}
-            Line::Label { orig_length, name } => {
-                name.push_str(":");
+                // text,
+                ..
+            } => {
+                #[allow(unreachable_code)]
+                if CHANGE_COMMENTS {
+                    if let Some(c) = COMMENT_PREFIX {
+                        *prefix = c.to_owned()
+                    }
+                }
             }
-            Line::Unknown { orig_length, text } => {}
-            Line::Blank => {}
+            Line::Label {
+                // orig_length,
+                // name,
+                had_colon,
+                // comment,
+                ..
+            } => {
+                *had_colon = STANDALONE_LABEL_COLON;
+            }
+            // Line::Unknown { orig_length, text } => {}
+            // Line::Blank => {}
+            _ => {}
         };
     }
 }
