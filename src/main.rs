@@ -1,6 +1,6 @@
-use std::fs;
 use std::io::{self, prelude::*};
 use std::{cmp, env};
+use std::{collections::HashSet, fs};
 
 use regex::{self, Regex};
 
@@ -9,7 +9,7 @@ const COMMENT_PREFIX: Option<char> = Some(';');
 const CHANGE_COMMENTS: bool = false;
 const STANDALONE_LABEL_COLON: bool = true;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum Size {
     Short,
     Byte,
@@ -20,6 +20,7 @@ enum Size {
 
 // orig_length exists to avoid excessive allocations when composing the processed strings
 // (because it lets us create a String::with_capacity(orig_length) instead of a zero-capacity one)
+#[derive(Debug)]
 enum Line {
     Code {
         orig_length: u16,
@@ -31,6 +32,7 @@ enum Line {
         medial_ws: u16,
         args: Option<String>,
         final_ws: Option<u16>,
+        prefix: Option<char>,
         comment: Option<String>,
         collapsible: bool,
     },
@@ -57,6 +59,7 @@ enum Line {
 struct Regexes<'a> {
     code: &'a Regex,
     label_with_comment: &'a Regex,
+    argless_command: &'a Regex,
 }
 
 fn main() -> Result<(), io::Error> {
@@ -68,19 +71,24 @@ fn main() -> Result<(), io::Error> {
         r"(?P<instruction>[a-zA-Z]+)(?P<size>\.[SBWL])?", // instruction
         r"(?P<ws2>\s+)",                 // whitespace after instruction
         r"(?P<args>",
-        r"(?:#?[$%]?[/a-zA-Z0-9]+|#?'[^']+')",
-        //            ^prefixes ^reg(list) ^string
+        r"(?:#?[$%]?[/a-zA-Z0-9_]+|#?'[^']+')",
+        //   ^prefixes ^reg(list)  ^string
         r"(?:,(?:#?[$%]?[/a-zA-Z0-9]+|#?'[^']+'))*",
         r")",
-        r"(?P<ws3>\s+)?",    // whitespace after args
-        r"(?P<comment>.+)?", // comment
+        r"(?P<ws3>\s+)?",                     // whitespace after args
+        r"(?P<prefix>[;*])?(?P<comment>.+)?", // comment
         r"$"
     ))
     .unwrap();
     // println!("{}", code.as_str());
-    let label_with_comment =
-        Regex::new(r"^(?P<label>\w+)?(?P<colon>:)?(?:\s*(?P<prefix>[;*])(?P<comment>\.+))?$")
-            .unwrap();
+    let label_with_comment = Regex::new(
+        r"^(?P<label>\w+)?(?P<colon>:)?(?:(?P<ws>\s*)(?P<prefix>[;*])(?P<comment>.+))?$",
+    )
+    .unwrap();
+    let argless_command = Regex::new(
+        r"^(?P<label>\w+)?(?P<colon>:)?(?:(?P<ws>\s*)(?P<prefix>[;*])?(?P<comment>.+))?$",
+    )
+    .unwrap();
     // println!("{}", label_with_comment.as_str());
 
     let args: Vec<String> = env::args().collect();
@@ -95,6 +103,7 @@ fn main() -> Result<(), io::Error> {
                 &Regexes {
                     code: &code,
                     label_with_comment: &label_with_comment,
+                    argless_command: &argless_command,
                 },
             )
         })
@@ -124,7 +133,10 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             orig_length: post_trimmed.len() as u16,
             ws: (post_trimmed.len() - trimmed.len()) as u16,
             prefix: trimmed.chars().nth(0).expect("Line comment went screwy"),
-            text: trimmed.to_owned(),
+            text: trimmed
+                .strip_prefix(|s| s == ';' || s == '*')
+                .unwrap_or(trimmed)
+                .to_owned(),
         };
     }
     // apparently faster/smaller than !trimmed.contains(char::is_ascii_whitespace)
@@ -137,6 +149,25 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             comment: None,
         };
     }
+    if trimmed.starts_with("SIMHALT") || trimmed.starts_with("END") || trimmed.starts_with("RTS") {
+        let captures = regexes.argless_command.captures(trimmed).unwrap();
+        return Line::Code {
+            orig_length: line.len() as u16,
+            label: None,
+            has_colon: false,
+            initial_ws: (post_trimmed.len() - trimmed.len()) as u16,
+            instruction: captures.name("label").unwrap().as_str().to_owned(),
+            size: Size::None,
+            medial_ws: 0,
+            args: None,
+            final_ws: captures.name("ws").map(|m| m.range().len() as u16),
+            prefix: captures
+                .name("prefix")
+                .and_then(|m| m.as_str().chars().nth(0)),
+            comment: captures.name("comment").map(|m| m.as_str().to_owned()),
+            collapsible: false,
+        };
+    }
     if let Some(captures) = regexes.label_with_comment.captures(post_trimmed) {
         return Line::Label {
             has_colon: captures.name("colon").is_some(),
@@ -147,8 +178,9 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 .and_then(|m| m.as_str().chars().nth(0)),
             comment: captures.name("comment").map(|m| m.as_str().to_owned()),
         };
-    } else if let Some(captures) = regexes.code.captures(post_trimmed) {
-        Line::Code {
+    }
+    if let Some(captures) = regexes.code.captures(post_trimmed) {
+        return Line::Code {
             orig_length: trimmed.len() as u16,
             label: captures.name("label").map(|m| m.as_str().to_owned()),
             has_colon: captures.name("colon").is_some(),
@@ -176,14 +208,16 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 .unwrap_or_default(),
             args: captures.name("args").map(|m| m.as_str().to_owned()),
             final_ws: captures.name("ws3").map(|m| m.range().len() as u16),
+            prefix: captures
+                .name("prefix")
+                .and_then(|m| m.as_str().chars().nth(0)),
             comment: captures.name("comment").map(|m| m.as_str().to_owned()),
             collapsible: false,
-        }
-    } else {
-        Line::Unknown {
-            orig_length: post_trimmed.len() as u16,
-            text: post_trimmed.to_owned(),
-        }
+        };
+    }
+    Line::Unknown {
+        orig_length: post_trimmed.len() as u16,
+        text: post_trimmed.to_owned(),
     }
 }
 
@@ -200,7 +234,8 @@ fn process(lines: &mut Vec<Line>) {
                 // medial_ws,
                 args,
                 // final_ws,
-                comment,
+                prefix,
+                // comment,
                 collapsible,
                 ..
             } => {
@@ -214,15 +249,7 @@ fn process(lines: &mut Vec<Line>) {
                 }
                 #[allow(unreachable_code)]
                 if CHANGE_COMMENTS {
-                    if let Some(c) = COMMENT_PREFIX {
-                        *comment = match comment {
-                            Some(s) => Some(
-                                c.to_string()
-                                    + s.strip_prefix(|c| c == ';' || c == '*').unwrap_or(s),
-                            ),
-                            None => None,
-                        };
-                    }
+                    *prefix = COMMENT_PREFIX;
                 }
             }
             Line::Comment {
@@ -236,7 +263,7 @@ fn process(lines: &mut Vec<Line>) {
                 #[allow(unreachable_code)]
                 if CHANGE_COMMENTS {
                     if let Some(c) = COMMENT_PREFIX {
-                        *prefix = c.to_owned()
+                        *prefix = c
                     }
                 }
             }
@@ -251,17 +278,14 @@ fn process(lines: &mut Vec<Line>) {
                 *has_colon = STANDALONE_LABEL_COLON;
                 #[allow(unreachable_code)]
                 if CHANGE_COMMENTS {
-                    *prefix = match COMMENT_PREFIX {
-                        Some(c) => Some(c),
-                        None => None,
-                    }
+                    *prefix = COMMENT_PREFIX;
                 }
             }
-            // Line::Unknown { orig_length, text } => {}
-            // Line::Blank => {}
             _ => {}
         };
     }
+
+    // handle sequences of MOVE.B '*'
     let mut movegroup: Vec<usize> = Vec::new();
     for i in 0..lines.len() {
         match &lines[i] {
@@ -319,10 +343,14 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
     let mut instruction_tabstop = 0;
     let mut arg_tabstop = 0;
     let mut comment_tabstop = 0;
+
+    let mut original_instruction_tabstops: HashSet<usize> = HashSet::new();
+
     for i in 0..lines.len() {
         match &lines[i] {
             Line::Code {
                 label,
+                initial_ws,
                 has_colon,
                 instruction,
                 size,
@@ -331,6 +359,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
             } => {
                 let label_length =
                     label.as_ref().map(|s| s.len()).unwrap_or_default() + *has_colon as usize;
+                original_instruction_tabstops.insert(label_length + (*initial_ws as usize));
                 instruction_tabstop = cmp::max(instruction_tabstop, label_length);
                 arg_tabstop = cmp::max(
                     arg_tabstop,
@@ -356,8 +385,12 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
     arg_tabstop = instruction_tabstop + ceiling_div(arg_tabstop, ALIGNMENT) * ALIGNMENT;
     comment_tabstop = arg_tabstop + ceiling_div(comment_tabstop, ALIGNMENT) * ALIGNMENT;
 
+    let original_instruction_tabstop =
+        original_instruction_tabstops.iter().sum::<usize>() / original_instruction_tabstops.len();
+
     // second pass, compose appropriately-aligned strings
     for i in 0..lines.len() {
+        println!("{:?}", lines[i]);
         match &lines[i] {
             Line::Code {
                 orig_length,
@@ -366,6 +399,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                 instruction,
                 size,
                 args,
+                prefix,
                 comment,
                 ..
             } => {
@@ -386,7 +420,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                     Size::Byte => ".B",
                     Size::Word => ".W",
                     Size::Long => ".L",
-                    Size::None => "",
+                    Size::None => ".?",
                 });
 
                 if let Some(s) = args {
@@ -396,6 +430,9 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                 }
 
                 if let Some(s) = comment {
+                    if let Some(c) = prefix {
+                        composed_line.push(*c);
+                    }
                     // instead of final_ws:
                     composed_line.push_str(&" ".repeat(comment_tabstop - composed_line.len()));
                     composed_line.push_str(s);
@@ -409,9 +446,13 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                 prefix,
                 text,
             } => {
+                // XXX: this logic is very sus lmao, not accounting properly for the diff
+                // btwn instruction_tabstop and original_instruction tabstop
                 let mut composed_line = String::with_capacity(*orig_length as usize);
-                if (*ws as usize) < instruction_tabstop / 2 {
+                if (*ws as usize) < original_instruction_tabstop / 2 {
                     composed_line.push_str(""); // no-op
+                } else if (*ws as usize) <= original_instruction_tabstop {
+                    composed_line.push_str(&" ".repeat(instruction_tabstop - composed_line.len()));
                 } else if (*ws as usize) < (arg_tabstop - instruction_tabstop) / 2 {
                     composed_line.push_str(&" ".repeat(instruction_tabstop - composed_line.len()));
                 } else {
