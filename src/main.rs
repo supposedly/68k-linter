@@ -139,16 +139,6 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 .to_owned(),
         };
     }
-    // apparently faster/smaller than !trimmed.contains(char::is_ascii_whitespace)
-    if !trimmed.as_bytes().iter().any(u8::is_ascii_whitespace) {
-        return Line::Label {
-            orig_length: post_trimmed.len() as u16,
-            has_colon: post_trimmed.ends_with(':'),
-            name: post_trimmed.to_owned(),
-            prefix: None,
-            comment: None,
-        };
-    }
     if trimmed.starts_with("SIMHALT") || trimmed.starts_with("END") || trimmed.starts_with("RTS") {
         let captures = regexes.argless_command.captures(trimmed).unwrap();
         return Line::Code {
@@ -166,6 +156,16 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 .and_then(|m| m.as_str().chars().nth(0)),
             comment: captures.name("comment").map(|m| m.as_str().to_owned()),
             collapsible: false,
+        };
+    }
+    // apparently faster/smaller than !trimmed.contains(char::is_ascii_whitespace)
+    if !trimmed.as_bytes().iter().any(u8::is_ascii_whitespace) {
+        return Line::Label {
+            orig_length: post_trimmed.len() as u16,
+            has_colon: post_trimmed.ends_with(':'),
+            name: post_trimmed.to_owned(),
+            prefix: None,
+            comment: None,
         };
     }
     if let Some(captures) = regexes.label_with_comment.captures(post_trimmed) {
@@ -195,10 +195,10 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             size: captures
                 .name("size")
                 .map(|m| match m.as_str() {
-                    "S" => Size::Short,
-                    "B" => Size::Byte,
-                    "W" => Size::Word,
-                    "L" => Size::Long,
+                    ".S" => Size::Short,
+                    ".B" => Size::Byte,
+                    ".W" => Size::Word,
+                    ".L" => Size::Long,
                     _ => Size::None,
                 })
                 .unwrap_or(Size::None),
@@ -420,7 +420,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                     Size::Byte => ".B",
                     Size::Word => ".W",
                     Size::Long => ".L",
-                    Size::None => ".?",
+                    Size::None => "",
                 });
 
                 if let Some(s) = args {
