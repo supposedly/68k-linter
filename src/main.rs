@@ -287,16 +287,21 @@ fn process(lines: &mut Vec<Line>) {
 
     // handle sequences of MOVE.B '*'
     let mut movegroup: Vec<usize> = Vec::new();
-    for i in 0..lines.len() {
+    for i in (0..lines.len()).rev() {
         match &lines[i] {
             Line::Code { collapsible, .. } => {
+                println!("{}", collapsible);
                 if *collapsible {
                     movegroup.push(i);
                 } else {
-                    match movegroup.len() {
-                        2 => handle_movegroup(&movegroup, lines, Size::Word),
-                        4 => handle_movegroup(&movegroup, lines, Size::Long),
-                        _ => {}
+                    let mut offset = 0;
+                    while movegroup.len() - offset > 4 {
+                        handle_movegroup(&movegroup[offset..offset+4], lines, Size::Long);
+                        offset += 4;
+                    }
+                    while movegroup.len() - offset > 2 {
+                        handle_movegroup(&movegroup[offset..offset+2], lines, Size::Word);
+                        offset += 2;
                     }
                     movegroup.clear();
                 }
@@ -306,7 +311,7 @@ fn process(lines: &mut Vec<Line>) {
     }
 }
 
-fn handle_movegroup(indices: &Vec<usize>, lines: &mut Vec<Line>, new_size: Size) {
+fn handle_movegroup(indices: &[usize], lines: &mut Vec<Line>, new_size: Size) {
     let mut composed = String::new();
     for i in indices {
         match &lines[*i] {
@@ -316,6 +321,7 @@ fn handle_movegroup(indices: &Vec<usize>, lines: &mut Vec<Line>, new_size: Size)
             _ => {}
         }
     }
+    composed = composed.chars().rev().collect();
     match &mut lines[indices[0]] {
         Line::Code {
             size,
@@ -390,7 +396,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
 
     // second pass, compose appropriately-aligned strings
     for i in 0..lines.len() {
-        println!("{:?}", lines[i]);
+        // println!("{:?}", lines[i]);
         match &lines[i] {
             Line::Code {
                 orig_length,
