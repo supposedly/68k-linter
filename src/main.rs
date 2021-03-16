@@ -59,14 +59,16 @@ fn main() -> Result<(), io::Error> {
     let filename = &args[1];
     let handle = fs::File::open(filename)?;
     let reader = io::BufReader::new(handle);
-    for line in collect_lines(reader)?.iter() {
-        parse(line, &code);
-    }
+    let parsed: Vec<Line> = collect_lines(reader)?
+        .iter()
+        .map(|line| parse(line, &code))
+        .collect();
 
     Ok(())
 }
 
 fn collect_lines<B: BufRead>(reader: B) -> io::Result<Vec<String>> {
+    // this function was longer but i trimmed it down & haven't inlined it yet
     reader.lines().collect::<io::Result<Vec<_>>>()
 }
 
@@ -108,7 +110,7 @@ fn parse(line: &str, code_regex: &Regex) -> Line {
                     "B" => Size::Byte,
                     "W" => Size::Word,
                     "L" => Size::Long,
-                    _ => Size::None
+                    _ => Size::None,
                 })
                 .unwrap_or(Size::None),
             medial_ws: captures
