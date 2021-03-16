@@ -45,7 +45,7 @@ fn main() -> Result<(), io::Error> {
         r"(?P<instruction>[a-zA-Z]+)(?P<size>\.[SBWL])?", // instruction
         r"(?P<ws2>\s+)",                                  // whitespace after instruction
         r"(?P<args>",
-        r"(?:#?[$%]?[/a-zA-Z0-9]+|#'[^']+'",
+        r"(?:#?[$%]?[/a-zA-Z0-9]+|#'[^']+')",
         //            ^prefixes ^reg(list) ^string
         r"(?:,(?:#?[$%]?[/a-zA-Z0-9]+|#'[^']+'))*",
         r")",
@@ -108,7 +108,7 @@ fn parse(line: &str, code_regex: &Regex) -> Line {
                     "B" => Size::Byte,
                     "W" => Size::Word,
                     "L" => Size::Long,
-                    _ => panic!("Invalid size")
+                    _ => Size::None
                 })
                 .unwrap_or(Size::None),
             medial_ws: captures
