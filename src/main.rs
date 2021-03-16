@@ -226,7 +226,7 @@ fn process(lines: &mut Vec<Line>) {
         match line {
             Line::Code {
                 // orig_length,
-                // label,
+                label,
                 // has_colon,
                 // initial_ws,
                 instruction,
@@ -243,7 +243,7 @@ fn process(lines: &mut Vec<Line>) {
                     if let Some(s) = args {
                         // sloppy lol
                         if s.starts_with("#'") && s.contains("',(A5)+") {
-                            *collapsible = true;
+                            *collapsible = label.is_none();
                         }
                     }
                 }
@@ -328,7 +328,6 @@ fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size
         Line::Code {
             size,
             args,
-            label,
             collapsible,
             ..
         } => {
@@ -336,7 +335,7 @@ fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size
             if let Some(s) = args {
                 s.replace_range(2..3, &composed.chars().rev().collect::<String>().to_owned());
             }
-            *collapsible = label.is_none();
+            *collapsible = false;
         }
         _ => {}
     }
