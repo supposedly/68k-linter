@@ -1,0 +1,1 @@
+This isn't actual project code for 422. It's just a formatter for X68 files. It also doesn't work at the moment, but either I'll change that soon or anyone reading this can feel free to fork and fixxxx
