@@ -62,22 +62,24 @@ struct Regexes<'a> {
 fn main() -> Result<(), io::Error> {
     // annoying alternative to putting these in the actual parse() function and using lazy_static on them
     let code = Regex::new(concat!(
-        r"(?P<label>\w+)?(?P<colon>:)?",                  // optional label
-        r"(?P<ws1>\s+)",                                  // whitespace before instruction
+        r"^",
+        r"(?P<label>\w+)?(?P<colon>:)?", // optional label
+        r"(?P<ws1>\s+)",                 // whitespace before instruction
         r"(?P<instruction>[a-zA-Z]+)(?P<size>\.[SBWL])?", // instruction
-        r"(?P<ws2>\s+)",                                  // whitespace after instruction
+        r"(?P<ws2>\s+)",                 // whitespace after instruction
         r"(?P<args>",
         r"(?:#?[$%]?[/a-zA-Z0-9]+|#?'[^']+')",
         //            ^prefixes ^reg(list) ^string
         r"(?:,(?:#?[$%]?[/a-zA-Z0-9]+|#?'[^']+'))*",
         r")",
         r"(?P<ws3>\s+)?",    // whitespace after args
-        r"(?P<comment>.+)?"  // comment
+        r"(?P<comment>.+)?", // comment
+        r"$"
     ))
     .unwrap();
     // println!("{}", code.as_str());
     let label_with_comment =
-        Regex::new(r"(?P<label>\w+)?(?P<colon>:)?(?:\s*(?P<prefix>[;*])(?P<comment>\.+))?")
+        Regex::new(r"^(?P<label>\w+)?(?P<colon>:)?(?:\s*(?P<prefix>[;*])(?P<comment>\.+))?$")
             .unwrap();
     // println!("{}", label_with_comment.as_str());
 
@@ -111,7 +113,7 @@ fn collect_lines<B: BufRead>(reader: B) -> io::Result<Vec<String>> {
 }
 
 fn parse(line: &str, regexes: &Regexes) -> Line {
-    println!("{}", line);
+    // println!("{}", line);
     let post_trimmed = line.trim_end();
     let trimmed = post_trimmed.trim_start();
     if trimmed.is_empty() {
@@ -135,20 +137,18 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             comment: None,
         };
     }
-    match regexes.label_with_comment.captures(post_trimmed) {
-        Some(captures) => {
-            return Line::Label {
-                has_colon: captures.name("colon").is_some(),
-                orig_length: trimmed.len() as u16,
-                name: captures.name("label").unwrap().as_str().to_owned(),
-                prefix: captures.name("prefix").and_then(|m| m.as_str().chars().nth(0)),
-                comment: captures.name("comment").map(|m| m.as_str().to_owned()),
-            }
-        }
-        None => {}
-    };
-    match regexes.code.captures(post_trimmed) {
-        Some(captures) => Line::Code {
+    if let Some(captures) = regexes.label_with_comment.captures(post_trimmed) {
+        return Line::Label {
+            has_colon: captures.name("colon").is_some(),
+            orig_length: trimmed.len() as u16,
+            name: captures.name("label").unwrap().as_str().to_owned(),
+            prefix: captures
+                .name("prefix")
+                .and_then(|m| m.as_str().chars().nth(0)),
+            comment: captures.name("comment").map(|m| m.as_str().to_owned()),
+        };
+    } else if let Some(captures) = regexes.code.captures(post_trimmed) {
+        Line::Code {
             orig_length: trimmed.len() as u16,
             label: captures.name("label").map(|m| m.as_str().to_owned()),
             has_colon: captures.name("colon").is_some(),
@@ -178,11 +178,12 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             final_ws: captures.name("ws3").map(|m| m.range().len() as u16),
             comment: captures.name("comment").map(|m| m.as_str().to_owned()),
             collapsible: false,
-        },
-        None => Line::Unknown {
+        }
+    } else {
+        Line::Unknown {
             orig_length: post_trimmed.len() as u16,
             text: post_trimmed.to_owned(),
-        },
+        }
     }
 }
 
