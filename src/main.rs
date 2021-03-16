@@ -163,7 +163,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
         return Line::Label {
             orig_length: post_trimmed.len() as u16,
             has_colon: post_trimmed.ends_with(':'),
-            name: post_trimmed.to_owned(),
+            name: post_trimmed.strip_suffix(':').unwrap_or(post_trimmed).to_owned(),
             prefix: None,
             comment: None,
         };
