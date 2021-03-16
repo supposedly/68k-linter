@@ -98,7 +98,9 @@ fn main() -> Result<(), io::Error> {
         })
         .collect();
     process(&mut parsed);
-    transform(&parsed);
+    for line in transform(&parsed) {
+        println!("{}", line);
+    }
 
     Ok(())
 }
