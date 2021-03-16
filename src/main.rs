@@ -328,6 +328,7 @@ fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size
         Line::Code {
             size,
             args,
+            label,
             collapsible,
             ..
         } => {
@@ -335,7 +336,7 @@ fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size
             if let Some(s) = args {
                 s.replace_range(2..3, &composed.chars().rev().collect::<String>().to_owned());
             }
-            *collapsible = false;
+            *collapsible = label.is_none();
         }
         _ => {}
     }
