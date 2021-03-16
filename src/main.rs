@@ -4,7 +4,7 @@ use std::{cmp, env};
 
 use regex::{self, Regex};
 
-const ALIGNMENT: u8 = 4; // tab size
+const ALIGNMENT: usize = 4; // tab size
 const COMMENT_PREFIX: Option<char> = Some(';');
 const CHANGE_COMMENTS: bool = false;
 const STANDALONE_LABEL_COLON: bool = true;
@@ -44,6 +44,7 @@ enum Line {
         has_colon: bool,
         orig_length: u16,
         name: String,
+        prefix: Option<char>,
         comment: Option<String>,
     },
     Unknown {
@@ -76,7 +77,8 @@ fn main() -> Result<(), io::Error> {
     .unwrap();
     // println!("{}", code.as_str());
     let label_with_comment =
-        Regex::new(r"(?P<label>\w+)?(?P<colon>:)?(?:\s*[;*](?P<comment>\.+))?").unwrap();
+        Regex::new(r"(?P<label>\w+)?(?P<colon>:)?(?:\s*(?P<prefix>[;*])(?P<comment>\.+))?")
+            .unwrap();
     // println!("{}", label_with_comment.as_str());
 
     let args: Vec<String> = env::args().collect();
@@ -127,6 +129,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
             orig_length: post_trimmed.len() as u16,
             has_colon: post_trimmed.ends_with(':'),
             name: post_trimmed.to_owned(),
+            prefix: None,
             comment: None,
         };
     }
@@ -136,6 +139,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
                 has_colon: captures.name("colon").is_some(),
                 orig_length: trimmed.len() as u16,
                 name: captures.name("label").unwrap().as_str().to_owned(),
+                prefix: captures.name("prefix").and_then(|m| m.as_str().chars().nth(0)),
                 comment: captures.name("comment").map(|m| m.as_str().to_owned()),
             }
         }
@@ -209,7 +213,10 @@ fn process(lines: &mut Vec<Line>) {
                 if CHANGE_COMMENTS {
                     if let Some(c) = COMMENT_PREFIX {
                         *comment = match comment {
-                            Some(s) => Some(c.to_string() + &s),
+                            Some(s) => Some(
+                                c.to_string()
+                                    + s.strip_prefix(|c| c == ';' || c == '*').unwrap_or(s),
+                            ),
                             None => None,
                         };
                     }
@@ -234,10 +241,18 @@ fn process(lines: &mut Vec<Line>) {
                 // orig_length,
                 // name,
                 has_colon,
+                prefix,
                 // comment,
                 ..
             } => {
                 *has_colon = STANDALONE_LABEL_COLON;
+                #[allow(unreachable_code)]
+                if CHANGE_COMMENTS {
+                    *prefix = match COMMENT_PREFIX {
+                        Some(c) => Some(c),
+                        None => None,
+                    }
+                }
             }
             // Line::Unknown { orig_length, text } => {}
             // Line::Blank => {}
@@ -264,8 +279,38 @@ fn process(lines: &mut Vec<Line>) {
     }
 }
 
+fn handle_movegroup(indices: &Vec<usize>, lines: &mut Vec<Line>, new_size: Size) {
+    let mut composed = String::new();
+    for i in indices {
+        match &lines[*i] {
+            Line::Code { args, .. } if args.is_some() => {
+                composed.push_str(&args.as_ref().unwrap().chars().nth(2).unwrap().to_string());
+            }
+            _ => {}
+        }
+    }
+    match &mut lines[indices[0]] {
+        Line::Code {
+            size,
+            args,
+            collapsible,
+            ..
+        } => {
+            *size = new_size;
+            if let Some(s) = args {
+                s.replace_range(3..3, &composed.to_owned());
+            }
+            *collapsible = false;
+        }
+        _ => {}
+    }
+    for i in indices.iter().skip(1).rev() {
+        lines.remove(*i);
+    }
+}
+
 fn transform(lines: &Vec<Line>) -> Vec<String> {
-    let transformed: Vec<String> = Vec::new();
+    let mut transformed: Vec<String> = Vec::new();
 
     // first pass: determine appropriate tabstops
     let mut instruction_tabstop = 0;
@@ -289,7 +334,7 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                     instruction.len()
                         + match size {
                             Size::None => 0,
-                            _ => 1,
+                            _ => 2,
                         },
                 );
                 comment_tabstop = cmp::max(
@@ -303,29 +348,118 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
         }
     }
 
+    // snap tabstops to... actual tabstops
+    instruction_tabstop = ceiling_div(instruction_tabstop, ALIGNMENT) * ALIGNMENT;
+    arg_tabstop = instruction_tabstop + ceiling_div(arg_tabstop, ALIGNMENT) * ALIGNMENT;
+    comment_tabstop = arg_tabstop + ceiling_div(comment_tabstop, ALIGNMENT) * ALIGNMENT;
+
+    // second pass, compose appropriately-aligned strings
+    for i in 0..lines.len() {
+        match &lines[i] {
+            Line::Code {
+                orig_length,
+                label,
+                has_colon,
+                instruction,
+                size,
+                args,
+                comment,
+                ..
+            } => {
+                let mut composed_line = String::with_capacity(*orig_length as usize);
+                if let Some(s) = label {
+                    composed_line.push_str(s);
+                }
+                if *has_colon {
+                    composed_line.push(':');
+                }
+
+                // instead of initial_ws:
+                composed_line.push_str(&" ".repeat(instruction_tabstop - composed_line.len()));
+
+                composed_line.push_str(instruction);
+                composed_line.push_str(match size {
+                    Size::Short => ".S",
+                    Size::Byte => ".B",
+                    Size::Word => ".W",
+                    Size::Long => ".L",
+                    Size::None => "",
+                });
+
+                if let Some(s) = args {
+                    // instead of medial_ws:
+                    composed_line.push_str(&" ".repeat(arg_tabstop - composed_line.len()));
+                    composed_line.push_str(s);
+                }
+
+                if let Some(s) = comment {
+                    // instead of final_ws:
+                    composed_line.push_str(&" ".repeat(comment_tabstop - composed_line.len()));
+                    composed_line.push_str(s);
+                }
+
+                transformed.push(composed_line);
+            }
+            Line::Comment {
+                orig_length,
+                ws,
+                prefix,
+                text,
+            } => {
+                let mut composed_line = String::with_capacity(*orig_length as usize);
+                if (*ws as usize) < instruction_tabstop / 2 {
+                    composed_line.push_str(""); // no-op
+                } else if (*ws as usize) < (arg_tabstop - instruction_tabstop) / 2 {
+                    composed_line.push_str(&" ".repeat(instruction_tabstop - composed_line.len()));
+                } else {
+                    composed_line.push_str(&" ".repeat(comment_tabstop - composed_line.len()));
+                }
+                composed_line.push_str(&prefix.to_string());
+                composed_line.push(' '); // spacing after prefix
+                composed_line.push_str(text);
+
+                transformed.push(composed_line);
+            }
+            Line::Label {
+                has_colon,
+                orig_length,
+                name,
+                prefix,
+                comment,
+            } => {
+                let mut composed_line = String::with_capacity(*orig_length as usize);
+                composed_line.push_str(name);
+                if *has_colon {
+                    composed_line.push(':');
+                }
+                if let Some(s) = comment {
+                    composed_line.push_str(&" ".repeat(comment_tabstop - composed_line.len()));
+                    if let Some(c) = prefix {
+                        composed_line.push(*c);
+                    }
+                    composed_line.push_str(s);
+                }
+
+                transformed.push(composed_line);
+            }
+            Line::Unknown { orig_length, text } => {
+                let mut composed_line = String::with_capacity(*orig_length as usize);
+                composed_line.push_str(text);
+
+                transformed.push(composed_line);
+            }
+            Line::Blank => {
+                transformed.push(String::new());
+            }
+        }
+    }
+
     transformed
 }
 
-fn handle_movegroup(indices: &Vec<usize>, lines: &mut Vec<Line>, new_size: Size) {
-    let mut composed = String::new();
-    for i in indices {
-        match &lines[*i] {
-            Line::Code { args, .. } if args.is_some() => {
-                composed.push_str(&args.as_ref().unwrap().chars().nth(2).unwrap().to_string());
-            }
-            _ => {}
-        }
+fn ceiling_div(nume: usize, den: usize) -> usize {
+    if nume % den == 0 {
+        return nume / den;
     }
-    match &mut lines[indices[0]] {
-        Line::Code { size, args, .. } => {
-            *size = new_size;
-            if let Some(s) = args {
-                s.replace_range(3..3, &composed.to_owned());
-            }
-        }
-        _ => {}
-    }
-    for i in indices.iter().skip(1).rev() {
-        lines.remove(*i);
-    }
+    return nume / den + 1;
 }
