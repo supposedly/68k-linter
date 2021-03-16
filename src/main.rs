@@ -1,6 +1,6 @@
-use std::env;
 use std::fs;
 use std::io::{self, prelude::*};
+use std::{cmp, env};
 
 use regex::{self, Regex};
 
@@ -24,7 +24,7 @@ enum Line {
     Code {
         orig_length: u16,
         label: Option<String>,
-        had_colon: bool,
+        has_colon: bool,
         initial_ws: u16,
         instruction: String,
         size: Size,
@@ -41,7 +41,7 @@ enum Line {
         text: String,
     },
     Label {
-        had_colon: bool,
+        has_colon: bool,
         orig_length: u16,
         name: String,
         comment: Option<String>,
@@ -96,6 +96,7 @@ fn main() -> Result<(), io::Error> {
         })
         .collect();
     process(&mut parsed);
+    transform(&parsed);
 
     Ok(())
 }
@@ -124,7 +125,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
     if !trimmed.as_bytes().iter().any(u8::is_ascii_whitespace) {
         return Line::Label {
             orig_length: post_trimmed.len() as u16,
-            had_colon: post_trimmed.ends_with(':'),
+            has_colon: post_trimmed.ends_with(':'),
             name: post_trimmed.to_owned(),
             comment: None,
         };
@@ -132,7 +133,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
     match regexes.label_with_comment.captures(post_trimmed) {
         Some(captures) => {
             return Line::Label {
-                had_colon: captures.name("colon").is_some(),
+                has_colon: captures.name("colon").is_some(),
                 orig_length: trimmed.len() as u16,
                 name: captures.name("label").unwrap().as_str().to_owned(),
                 comment: captures.name("comment").map(|m| m.as_str().to_owned()),
@@ -144,7 +145,7 @@ fn parse(line: &str, regexes: &Regexes) -> Line {
         Some(captures) => Line::Code {
             orig_length: trimmed.len() as u16,
             label: captures.name("label").map(|m| m.as_str().to_owned()),
-            had_colon: captures.name("colon").is_some(),
+            has_colon: captures.name("colon").is_some(),
             initial_ws: captures
                 .name("ws1")
                 .map(|m| m.range().len() as u16)
@@ -185,7 +186,7 @@ fn process(lines: &mut Vec<Line>) {
             Line::Code {
                 // orig_length,
                 // label,
-                // had_colon,
+                // has_colon,
                 // initial_ws,
                 instruction,
                 size,
@@ -220,7 +221,8 @@ fn process(lines: &mut Vec<Line>) {
                 prefix,
                 // text,
                 ..
-            } => {
+            } =>
+            {
                 #[allow(unreachable_code)]
                 if CHANGE_COMMENTS {
                     if let Some(c) = COMMENT_PREFIX {
@@ -231,15 +233,99 @@ fn process(lines: &mut Vec<Line>) {
             Line::Label {
                 // orig_length,
                 // name,
-                had_colon,
+                has_colon,
                 // comment,
                 ..
             } => {
-                *had_colon = STANDALONE_LABEL_COLON;
+                *has_colon = STANDALONE_LABEL_COLON;
             }
             // Line::Unknown { orig_length, text } => {}
             // Line::Blank => {}
             _ => {}
         };
+    }
+    let mut movegroup: Vec<usize> = Vec::new();
+    for i in 0..lines.len() {
+        match &lines[i] {
+            Line::Code { collapsible, .. } => {
+                if *collapsible {
+                    movegroup.push(i);
+                } else {
+                    match movegroup.len() {
+                        2 => handle_movegroup(&movegroup, lines, Size::Word),
+                        4 => handle_movegroup(&movegroup, lines, Size::Long),
+                        _ => {}
+                    }
+                    movegroup.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn transform(lines: &Vec<Line>) -> Vec<String> {
+    let transformed: Vec<String> = Vec::new();
+
+    // first pass: determine appropriate tabstops
+    let mut instruction_tabstop = 0;
+    let mut arg_tabstop = 0;
+    let mut comment_tabstop = 0;
+    for i in 0..lines.len() {
+        match &lines[i] {
+            Line::Code {
+                label,
+                has_colon,
+                instruction,
+                size,
+                args,
+                ..
+            } => {
+                let label_length =
+                    label.as_ref().map(|s| s.len()).unwrap_or_default() + *has_colon as usize;
+                instruction_tabstop = cmp::max(instruction_tabstop, label_length);
+                arg_tabstop = cmp::max(
+                    arg_tabstop,
+                    instruction.len()
+                        + match size {
+                            Size::None => 0,
+                            _ => 1,
+                        },
+                );
+                comment_tabstop = cmp::max(
+                    comment_tabstop,
+                    args.as_ref().map(|s| s.len()).unwrap_or_default(),
+                );
+            }
+            // comments have nothing to contribute to any tabstop, they should just be aligned after this pass
+            // and standalone labels should not contribute to the instruction_tabstop i think
+            _ => {}
+        }
+    }
+
+    transformed
+}
+
+fn handle_movegroup(indices: &Vec<usize>, lines: &mut Vec<Line>, new_size: Size) {
+    let mut composed = String::new();
+    for i in indices {
+        match &lines[*i] {
+            Line::Code { args, .. } if args.is_some() => {
+                composed.push_str(&args.as_ref().unwrap().chars().nth(2).unwrap().to_string());
+            }
+            _ => {}
+        }
+    }
+    match &mut lines[indices[0]] {
+        Line::Code { size, args, .. } => {
+            *size = new_size;
+            if let Some(s) = args {
+                s.replace_range(3..3, &composed.to_owned());
+            }
+        }
+        _ => {}
+    }
+    for i in indices.iter().skip(1).rev() {
+        lines.remove(*i);
     }
 }
