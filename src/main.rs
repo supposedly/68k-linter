@@ -71,9 +71,9 @@ fn main() -> Result<(), io::Error> {
         r"(?P<instruction>[a-zA-Z]+)(?P<size>\.[SBWL])?", // instruction
         r"(?P<ws2>\s+)",                 // whitespace after instruction
         r"(?P<args>",
-        r"(?:#?[$%]?[/a-zA-Z0-9_]+|#?'[^']+')",
-        //   ^prefixes ^reg(list)  ^string
-        r"(?:,(?:#?[$%]?[/a-zA-Z0-9]+|#?'[^']+'))*",
+        r"(?:#?[$%]?[/a-zA-Z0-9_()\-+]+|#?'[^']+')",
+        //   ^prefixes ^reg(list)       ^string
+        r"(?:,(?:#?[$%]?[/a-zA-Z0-9_()\-+]+|#?'[^']+'))*",
         r")",
         r"(?P<ws3>\s+)?",                     // whitespace after args
         r"(?P<prefix>[;*])?(?P<comment>.+)?", // comment
