@@ -295,12 +295,12 @@ fn process(lines: &mut Vec<Line>) {
                     movegroup.push(i);
                 } else {
                     let mut offset = 0;
-                    while movegroup.len() - offset > 4 {
-                        handle_movegroup(&movegroup[offset..offset+4], lines, Size::Long);
+                    while movegroup.len() - offset >= 4 {
+                        handle_movegroup(&mut movegroup[offset..offset + 4], lines, Size::Long);
                         offset += 4;
                     }
-                    while movegroup.len() - offset > 2 {
-                        handle_movegroup(&movegroup[offset..offset+2], lines, Size::Word);
+                    while movegroup.len() - offset >= 2 {
+                        handle_movegroup(&mut movegroup[offset..offset + 2], lines, Size::Word);
                         offset += 2;
                     }
                     movegroup.clear();
@@ -311,9 +311,11 @@ fn process(lines: &mut Vec<Line>) {
     }
 }
 
-fn handle_movegroup(indices: &[usize], lines: &mut Vec<Line>, new_size: Size) {
+fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size) {
+    println!("{:?}", indices);
     let mut composed = String::new();
-    for i in indices {
+    indices.reverse();
+    for i in indices.iter() {
         match &lines[*i] {
             Line::Code { args, .. } if args.is_some() => {
                 composed.push_str(&args.as_ref().unwrap().chars().nth(2).unwrap().to_string());
@@ -331,7 +333,7 @@ fn handle_movegroup(indices: &[usize], lines: &mut Vec<Line>, new_size: Size) {
         } => {
             *size = new_size;
             if let Some(s) = args {
-                s.replace_range(3..3, &composed.to_owned());
+                s.replace_range(2..3, &composed.chars().rev().collect::<String>().to_owned());
             }
             *collapsible = false;
         }
@@ -465,7 +467,6 @@ fn transform(lines: &Vec<Line>) -> Vec<String> {
                     composed_line.push_str(&" ".repeat(comment_tabstop - composed_line.len()));
                 }
                 composed_line.push_str(&prefix.to_string());
-                composed_line.push(' '); // spacing after prefix
                 composed_line.push_str(text);
 
                 transformed.push(composed_line);
