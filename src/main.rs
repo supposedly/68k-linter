@@ -290,7 +290,7 @@ fn process(lines: &mut Vec<Line>) {
     for i in (0..lines.len()).rev() {
         match &lines[i] {
             Line::Code { collapsible, .. } => {
-                println!("{}", collapsible);
+                // println!("{}", collapsible);
                 if *collapsible {
                     movegroup.push(i);
                 } else {
@@ -312,7 +312,7 @@ fn process(lines: &mut Vec<Line>) {
 }
 
 fn handle_movegroup(indices: &mut [usize], lines: &mut Vec<Line>, new_size: Size) {
-    println!("{:?}", indices);
+    // println!("{:?}", indices);
     let mut composed = String::new();
     indices.reverse();
     for i in indices.iter() {
